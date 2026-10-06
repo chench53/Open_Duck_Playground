@@ -6,17 +6,20 @@ import mujoco.viewer
 import time
 import argparse
 from playground.common.onnx_infer import OnnxInfer
-from playground.common.poly_reference_motion_numpy import PolyReferenceMotion
 from playground.common.utils import LowPassActionFilter
 
 from playground.open_duck_mini_v2.mujoco_infer_base import MJInferBase
 
 USE_MOTOR_SPEED_LIMITS = True
+GAIT_PHASE_PERIOD_STEPS = 50
 
 
 class MjInfer(MJInferBase):
     def __init__(
-        self, model_path: str, reference_data: str, onnx_model_path: str, standing: bool
+        self,
+        model_path: str,
+        onnx_model_path: str,
+        standing: bool,
     ):
         super().__init__(model_path)
 
@@ -31,9 +34,6 @@ class MjInfer(MJInferBase):
         self.action_scale = 0.25
 
         self.action_filter = LowPassActionFilter(50, cutoff_frequency=37.5)
-
-        if not self.standing:
-            self.PRM = PolyReferenceMotion(reference_data)
 
         self.policy = OnnxInfer(onnx_model_path, awd=True)
 
@@ -50,9 +50,12 @@ class MjInfer(MJInferBase):
         self.last_last_action = np.zeros(self.num_dofs)
         self.last_last_last_action = np.zeros(self.num_dofs)
         self.commands = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self.mjx_manual_command = [0.0] * 7
+        self.mjx_manual_viewer_active = False
+        self.mjx_manual_reset_requested = False
 
-        self.imitation_i = 0
-        self.imitation_phase = np.array([0, 0])
+        self.gait_phase_i = 0
+        self.gait_phase = np.array([1.0, 0.0])
         self.saved_obs = []
 
         self.max_motor_velocity = 5.24  # rad/s
@@ -71,7 +74,6 @@ class MjInfer(MJInferBase):
     ):
         gyro = self.get_gyro(data)
         accelerometer = self.get_accelerometer(data)
-        accelerometer[0] += 1.3
 
         joint_angles = self.get_actuator_joints_qpos(data.qpos)
         joint_vel = self.get_actuator_joints_qvel(data.qvel)
@@ -96,7 +98,7 @@ class MjInfer(MJInferBase):
                 contacts,
                 # ref if not self.standing else np.array([]),
                 # [self.imitation_i]
-                self.imitation_phase,
+                self.gait_phase,
             ]
         )
 
@@ -104,6 +106,9 @@ class MjInfer(MJInferBase):
 
     def key_callback(self, keycode):
         print(f"key: {keycode}")
+        if keycode == 32:  # space: release all virtual joystick axes
+            self.commands = [0.0] * len(self.commands)
+            return
         if keycode == 72:  # h
             self.head_control_mode = not self.head_control_mode
         lin_vel_x = 0
@@ -118,13 +123,13 @@ class MjInfer(MJInferBase):
                 lin_vel_y = self.COMMANDS_RANGE_Y[1]
             if keycode == 262:  # arrow right
                 lin_vel_y = self.COMMANDS_RANGE_Y[0]
-            if keycode == 81:  # a
+            if keycode == 81:  # q
                 ang_vel = self.COMMANDS_RANGE_THETA[1]
             if keycode == 69:  # e
                 ang_vel = self.COMMANDS_RANGE_THETA[0]
             if keycode == 80:  # p
                 self.phase_frequency_factor += 0.1
-            if keycode == 59:  # m
+            if keycode == 77:  # m
                 self.phase_frequency_factor -= 0.1
         else:
             neck_pitch = 0
@@ -139,7 +144,7 @@ class MjInfer(MJInferBase):
                 head_yaw = self.HEAD_YAW_RANGE[1]
             if keycode == 262:  # arrow right
                 head_yaw = self.HEAD_YAW_RANGE[0]
-            if keycode == 81:  # a
+            if keycode == 81:  # q
                 head_roll = self.HEAD_ROLL_RANGE[1]
             if keycode == 69:  # e
                 head_roll = self.HEAD_ROLL_RANGE[0]
@@ -152,6 +157,39 @@ class MjInfer(MJInferBase):
         self.commands[0] = lin_vel_x
         self.commands[1] = lin_vel_y
         self.commands[2] = ang_vel
+
+    def mjx_manual_key_callback(self, keycode):
+        if keycode == 32:
+            self.mjx_manual_command = [0.0] * 7
+            print("Manual command set to zero.", flush=True)
+            return
+        if keycode == 82 and self.mjx_manual_viewer_active:  # r
+            self.mjx_manual_reset_requested = True
+            print("Reset requested.", flush=True)
+            return
+
+        command = [0.0] * 7
+        if keycode == 265:
+            command[0] = self.COMMANDS_RANGE_X[1]
+        elif keycode == 264:
+            command[0] = self.COMMANDS_RANGE_X[0]
+        elif keycode == 263:
+            command[1] = self.COMMANDS_RANGE_Y[1]
+        elif keycode == 262:
+            command[1] = self.COMMANDS_RANGE_Y[0]
+        elif keycode == 81:
+            command[2] = self.COMMANDS_RANGE_THETA[1]
+        elif keycode == 69:
+            command[2] = self.COMMANDS_RANGE_THETA[0]
+        else:
+            return
+
+        self.mjx_manual_command = command
+        print(
+            f"Manual command: vx={command[0]:.2f}, vy={command[1]:.2f}, "
+            f"yaw={command[2]:.2f}",
+            flush=True,
+        )
 
     def run(self):
         try:
@@ -173,27 +211,14 @@ class MjInfer(MJInferBase):
 
                     if counter % self.decimation == 0:
                         if not self.standing:
-                            self.imitation_i += 1.0 * self.phase_frequency_factor
-                            self.imitation_i = (
-                                self.imitation_i % self.PRM.nb_steps_in_period
+                            self.gait_phase_i = (
+                                self.gait_phase_i + self.phase_frequency_factor
+                            ) % GAIT_PHASE_PERIOD_STEPS
+                            phase = (
+                                self.gait_phase_i / GAIT_PHASE_PERIOD_STEPS * 2 * np.pi
                             )
-                            # print(self.PRM.nb_steps_in_period)
-                            # exit()
-                            self.imitation_phase = np.array(
-                                [
-                                    np.cos(
-                                        self.imitation_i
-                                        / self.PRM.nb_steps_in_period
-                                        * 2
-                                        * np.pi
-                                    ),
-                                    np.sin(
-                                        self.imitation_i
-                                        / self.PRM.nb_steps_in_period
-                                        * 2
-                                        * np.pi
-                                    ),
-                                ]
+                            self.gait_phase = np.array(
+                                [np.cos(phase), np.sin(phase)]
                             )
                         obs = self.get_obs(
                             self.data,
@@ -240,6 +265,114 @@ class MjInfer(MJInferBase):
         except KeyboardInterrupt:
             pickle.dump(self.saved_obs, open("mujoco_saved_obs.pkl", "wb"))
 
+    def run_mjx_manual_viewer(self, checkpoint_path: str, seed: int = 0):
+        import jax
+        import jax.numpy as jp
+        from brax.training import checkpoint
+        from brax.training.acme import running_statistics
+        from brax.training.agents.ppo import networks as ppo_networks
+        from mujoco_playground.config import locomotion_params
+
+        from playground.common.randomize import domain_randomize
+        from playground.open_duck_mini_v2.joystick import Joystick
+
+        env = Joystick(task="flat_terrain")
+        ppo_config = locomotion_params.brax_ppo_config(
+            "BerkeleyHumanoidJoystickFlatTerrain"
+        )
+        networks = ppo_networks.make_ppo_networks(
+            env.observation_size,
+            env.action_size,
+            preprocess_observations_fn=running_statistics.normalize,
+            **dict(ppo_config.network_factory),
+        )
+        params = checkpoint.load(checkpoint_path)
+        policy = jax.jit(
+            ppo_networks.make_inference_fn(networks)(params, deterministic=False)
+        )
+        rng = jax.random.PRNGKey(seed)
+        rng, model_key, reset_key = jax.random.split(rng, 3)
+        batched_model, model_axes = domain_randomize(
+            env.mjx_model, jax.random.split(model_key, 1)
+        )
+        env._mjx_model = jax.tree_util.tree_map(
+            lambda value, axis: value[0] if axis == 0 else value,
+            batched_model,
+            model_axes,
+            is_leaf=lambda value: value is None,
+        )
+        reset_env = jax.jit(env.reset)
+        step_env = jax.jit(env.step)
+        state = reset_env(reset_key)
+        self.mjx_manual_viewer_active = True
+        self.mjx_manual_command = [0.0] * 7
+        self.mjx_manual_reset_requested = False
+        episode_steps = 0
+        fallen = False
+
+        def apply_manual_command(current_state):
+            info = dict(current_state.info)
+            command = jp.asarray(self.mjx_manual_command)
+            info["command"] = command
+            obs = dict(current_state.obs)
+            obs["state"] = obs["state"].at[6:13].set(command)
+            return current_state.replace(info=info, obs=obs)
+
+        try:
+            with mujoco.viewer.launch_passive(
+                self.model,
+                self.data,
+                show_left_ui=False,
+                show_right_ui=False,
+                key_callback=self.mjx_manual_key_callback,
+            ) as viewer:
+                print(
+                    "Stochastic MJX policy ready. Arrows move, Q/E turn, "
+                    "Space stops, R resets after a fall.",
+                    flush=True,
+                )
+                while viewer.is_running():
+                    step_start = time.time()
+                    if self.mjx_manual_reset_requested:
+                        rng, reset_key = jax.random.split(rng)
+                        state = apply_manual_command(reset_env(reset_key))
+                        episode_steps = 0
+                        fallen = False
+                        self.mjx_manual_reset_requested = False
+
+                    if not fallen:
+                        state = apply_manual_command(state)
+                        rng, action_key = jax.random.split(rng)
+                        action, _ = policy(
+                            {"state": state.obs["state"][None, :]}, action_key
+                        )
+                        state = step_env(state, action[0])
+                        episode_steps += 1
+                        self.data.qpos[:] = np.asarray(
+                            jax.device_get(state.data.qpos)
+                        )
+                        self.data.qvel[:] = np.asarray(
+                            jax.device_get(state.data.qvel)
+                        )
+                        self.data.ctrl[:] = np.asarray(
+                            jax.device_get(state.data.ctrl)
+                        )
+                        mujoco.mj_forward(self.model, self.data)
+                        if bool(np.asarray(jax.device_get(state.done))):
+                            print(
+                                f"Fell after {episode_steps} steps; press R to reset.",
+                                flush=True,
+                            )
+                            fallen = True
+
+                    viewer.sync()
+                    delay = env.dt - (time.time() - step_start)
+                    if delay > 0:
+                        time.sleep(delay)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.mjx_manual_viewer_active = False
 
 if __name__ == "__main__":
 
@@ -247,20 +380,22 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--onnx_model_path", type=str, required=True)
     # parser.add_argument("-k", action="store_true", default=False)
     parser.add_argument(
-        "--reference_data",
-        type=str,
-        default="playground/open_duck_mini_v2/data/polynomial_coefficients.pkl",
-    )
-    parser.add_argument(
         "--model_path",
         type=str,
         default="playground/open_duck_mini_v2/xmls/scene_flat_terrain.xml",
     )
     parser.add_argument("--standing", action="store_true", default=False)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--mjx-manual-viewer", action="store_true")
+
+    parser.add_argument("--checkpoint-path", type=str)
 
     args = parser.parse_args()
 
-    mjinfer = MjInfer(
-        args.model_path, args.reference_data, args.onnx_model_path, args.standing
-    )
-    mjinfer.run()
+    mjinfer = MjInfer(args.model_path, args.onnx_model_path, args.standing)
+    if args.mjx_manual_viewer:
+        if args.checkpoint_path is None:
+            parser.error("--checkpoint-path is required with --mjx-manual-viewer")
+        mjinfer.run_mjx_manual_viewer(args.checkpoint_path, seed=args.seed)
+    else:
+        mjinfer.run()

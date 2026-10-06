@@ -24,13 +24,11 @@ from mujoco.mjx._src import math
 import numpy as np
 
 from mujoco_playground._src import mjx_env
-from mujoco_playground._src.collision import geoms_colliding
 
 from . import constants
 from . import base as open_duck_mini_v2_base
 
 # from playground.common.utils import LowPassActionFilter
-from playground.common.poly_reference_motion import PolyReferenceMotion
 from playground.common.rewards import (
     reward_tracking_lin_vel,
     reward_tracking_ang_vel,
@@ -38,11 +36,11 @@ from playground.common.rewards import (
     cost_action_rate,
     cost_stand_still,
     reward_alive,
+    cost_termination,
+    cost_upright_orientation,
 )
-from playground.open_duck_mini_v2.custom_rewards import reward_imitation
 
-# if set to false, won't require the reference data to be present and won't compute the reference motions polynoms for nothing
-USE_IMITATION_REWARD = True
+GAIT_PHASE_PERIOD_STEPS = 50
 USE_MOTOR_SPEED_LIMITS = True
 
 
@@ -80,9 +78,10 @@ def default_config() -> config_dict.ConfigDict:
                 tracking_ang_vel=6.0,
                 torques=-1.0e-3,
                 action_rate=-0.5,  # was -1.5
-                stand_still=-0.2,  # was -1.0 TODO try to relax this a bit ?
+                stand_still=-0.5,
+                upright_orientation=-5.0,
+                termination=-50.0,
                 alive=20.0,
-                imitation=1.0,
             ),
             tracking_sigma=0.01,  # was working at 0.01
         ),
@@ -124,11 +123,6 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
         self._default_actuator = self._mj_model.keyframe(
             "home"
         ).ctrl  # ctrl of all the actual joints (no floating base and no backlash)
-
-        if USE_IMITATION_REWARD:
-            self.PRM = PolyReferenceMotion(
-                "playground/open_duck_mini_v2/data/polynomial_coefficients.pkl"
-            )
 
         # Note: First joint is freejoint.
         # get the range of the joints
@@ -255,7 +249,8 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
         # print(f'DEBUG3 base qvel: {qvel}')
         ctrl = self.get_actuator_joints_qpos(qpos)
         # print(f'DEBUG4 ctrl: {ctrl}')
-        data = mjx_env.init(self.mjx_model, qpos=qpos, qvel=qvel, ctrl=ctrl)
+        data = mjx_env.make_data(self.mjx_model, qpos=qpos, qvel=qvel, ctrl=ctrl)
+        data = mjx.forward(self.mjx_model, data)
         rng, cmd_rng = jax.random.split(rng)
         cmd = self.sample_command(cmd_rng)
 
@@ -267,13 +262,6 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
             maxval=self._config.push_config.interval_range[1],
         )
         push_interval_steps = jp.round(push_interval / self.dt).astype(jp.int32)
-
-        if USE_IMITATION_REWARD:
-            current_reference_motion = self.PRM.get_reference_motion(
-                cmd[0], cmd[1], cmd[2], 0
-            )
-        else:
-            current_reference_motion = jp.zeros(0)
 
         info = {
             "rng": rng,
@@ -295,10 +283,8 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 self._config.noise_config.action_max_delay * self._actuators
             ),
             "imu_history": jp.zeros(self._config.noise_config.imu_max_delay * 3),
-            # imitation related
-            "imitation_i": 0,
-            "current_reference_motion": current_reference_motion,
-            "imitation_phase": jp.zeros(2),
+            "gait_phase_i": 0,
+            "gait_phase": jp.array([1.0, 0.0]),
         }
 
         metrics = {}
@@ -312,7 +298,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
 
         contact = jp.array(
             [
-                geoms_colliding(data, geom_id, self._floor_geom_id)
+                open_duck_mini_v2_base.geoms_colliding(data, geom_id, self._floor_geom_id)
                 for geom_id in self._feet_geom_id
             ]
         )
@@ -322,37 +308,11 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
 
-        if USE_IMITATION_REWARD:
-            state.info["imitation_i"] += 1
-            state.info["imitation_i"] = (
-                state.info["imitation_i"] % self.PRM.nb_steps_in_period
-            )  # not critical, is already moduloed in get_reference_motion
-            state.info["imitation_phase"] = jp.array(
-                [
-                    jp.cos(
-                        (state.info["imitation_i"] / self.PRM.nb_steps_in_period)
-                        * 2
-                        * jp.pi
-                    ),
-                    jp.sin(
-                        (state.info["imitation_i"] / self.PRM.nb_steps_in_period)
-                        * 2
-                        * jp.pi
-                    ),
-                ]
-            )
-        else:
-            state.info["imitation_i"] = 0
-
-        if USE_IMITATION_REWARD:
-            state.info["current_reference_motion"] = self.PRM.get_reference_motion(
-                state.info["command"][0],
-                state.info["command"][1],
-                state.info["command"][2],
-                state.info["imitation_i"],
-            )
-        else:
-            state.info["current_reference_motion"] = jp.zeros(0)
+        state.info["gait_phase_i"] = (
+            state.info["gait_phase_i"] + 1
+        ) % GAIT_PHASE_PERIOD_STEPS
+        phase = state.info["gait_phase_i"] / GAIT_PHASE_PERIOD_STEPS * 2 * jp.pi
+        state.info["gait_phase"] = jp.array([jp.cos(phase), jp.sin(phase)])
 
         state.info["rng"], push1_rng, push2_rng, action_delay_rng = jax.random.split(
             state.info["rng"], 4
@@ -423,7 +383,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
 
         contact = jp.array(
             [
-                geoms_colliding(data, geom_id, self._floor_geom_id)
+                open_duck_mini_v2_base.geoms_colliding(data, geom_id, self._floor_geom_id)
                 for geom_id in self._feet_geom_id
             ]
         )
@@ -444,7 +404,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
         rewards = {
             k: v * self._config.reward_config.scales[k] for k, v in rewards.items()
         }
-        reward = jp.clip(sum(rewards.values()) * self.dt, 0.0, 10000.0)
+        reward = jp.clip(sum(rewards.values()) * self.dt, -10000.0, 10000.0)
         # jax.debug.print('STEP REWARD: {}',reward)
         state.info["push"] = push
         state.info["step"] += 1
@@ -498,8 +458,6 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
         )
 
         accelerometer = self.get_accelerometer(data)
-        # accelerometer[0] += 1.3 # TODO testing
-        accelerometer.at[0].set(accelerometer[0] + 1.3)
 
         info["rng"], noise_rng = jax.random.split(info["rng"])
         noisy_accelerometer = (
@@ -582,9 +540,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 info["last_last_last_act"],  # 10
                 info["motor_targets"],  # 10
                 contact,  # 2
-                # info["current_reference_motion"],
-                # info["imitation_i"],
-                info["imitation_phase"],
+                info["gait_phase"],
             ]
         )
 
@@ -608,9 +564,6 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
                 contact,  # 2
                 feet_vel,  # 4*3
                 info["feet_air_time"],  # 2
-                info["current_reference_motion"],
-                info["imitation_i"],
-                info["imitation_phase"],
             ]
         )
 
@@ -646,16 +599,8 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
             "torques": cost_torques(data.actuator_force),
             "action_rate": cost_action_rate(action, info["last_act"]),
             "alive": reward_alive(),
-            "imitation": reward_imitation(  # FIXME, this reward is so adhoc...
-                self.get_floating_base_qpos(data.qpos),  # floating base qpos
-                self.get_floating_base_qvel(data.qvel),  # floating base qvel
-                self.get_actuator_joints_qpos(data.qpos),
-                self.get_actuator_joints_qvel(data.qvel),
-                contact,
-                info["current_reference_motion"],
-                info["command"],
-                USE_IMITATION_REWARD,
-            ),
+            "upright_orientation": cost_upright_orientation(self.get_gravity(data)),
+            "termination": cost_termination(done),
             "stand_still": cost_stand_still(
                 # info["command"], data.qpos[7:], data.qvel[6:], self._default_pose
                 info["command"],
@@ -669,7 +614,7 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
         return ret
 
     def sample_command(self, rng: jax.Array) -> jax.Array:
-        rng1, rng2, rng3, rng4, rng5, rng6, rng7, rng8 = jax.random.split(rng, 8)
+        rng1, rng2, rng3, rng4 = jax.random.split(rng, 4)
 
         lin_vel_x = jax.random.uniform(
             rng1, minval=self._config.lin_vel_x[0], maxval=self._config.lin_vel_x[1]
@@ -683,43 +628,16 @@ class Joystick(open_duck_mini_v2_base.OpenDuckMiniV2Env):
             maxval=self._config.ang_vel_yaw[1],
         )
 
-        neck_pitch = jax.random.uniform(
-            rng5,
-            minval=self._config.neck_pitch_range[0] * self._config.head_range_factor,
-            maxval=self._config.neck_pitch_range[1] * self._config.head_range_factor,
-        )
-
-        head_pitch = jax.random.uniform(
-            rng6,
-            minval=self._config.head_pitch_range[0] * self._config.head_range_factor,
-            maxval=self._config.head_pitch_range[1] * self._config.head_range_factor,
-        )
-
-        head_yaw = jax.random.uniform(
-            rng7,
-            minval=self._config.head_yaw_range[0] * self._config.head_range_factor,
-            maxval=self._config.head_yaw_range[1] * self._config.head_range_factor,
-        )
-
-        head_roll = jax.random.uniform(
-            rng8,
-            minval=self._config.head_roll_range[0] * self._config.head_range_factor,
-            maxval=self._config.head_roll_range[1] * self._config.head_range_factor,
-        )
-
-        # With 10% chance, set everything to zero.
+        # Give stationary standing a quarter of the command samples.
         return jp.where(
-            jax.random.bernoulli(rng4, p=0.1),
+            jax.random.bernoulli(rng4, p=0.25),
             jp.zeros(7),
             jp.hstack(
                 [
                     lin_vel_x,
                     lin_vel_y,
                     ang_vel_yaw,
-                    neck_pitch,
-                    head_pitch,
-                    head_yaw,
-                    head_roll,
+                    jp.zeros(4),
                 ]
             ),
         )

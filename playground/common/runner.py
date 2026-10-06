@@ -88,6 +88,8 @@ class BaseRunner(ABC):
             "BerkeleyHumanoidJoystickFlatTerrain"
         )  # TODO
         self.ppo_training_params = dict(self.ppo_params)
+        if getattr(self.args, "num_envs", None) is not None:
+            self.ppo_training_params["num_envs"] = self.args.num_envs
         # self.ppo_training_params["num_timesteps"] = 150000000 * 20
         
 

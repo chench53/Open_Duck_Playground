@@ -46,6 +46,11 @@ def cost_orientation(torso_zaxis: jax.Array) -> jax.Array:
     return jp.nan_to_num(jp.sum(jp.square(torso_zaxis[:2])))
 
 
+def cost_upright_orientation(up_vector: jax.Array) -> jax.Array:
+    target_up = jp.array([0.0, 0.0, 1.0], dtype=up_vector.dtype)
+    return jp.nan_to_num(jp.sum(jp.square(up_vector - target_up)))
+
+
 def cost_base_height(base_height: jax.Array, base_height_target: float) -> jax.Array:
     return jp.nan_to_num(jp.square(base_height - base_height_target))
 

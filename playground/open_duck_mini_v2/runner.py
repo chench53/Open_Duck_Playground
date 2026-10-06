@@ -42,6 +42,12 @@ def main() -> None:
     )
     # parser.add_argument("--num_timesteps", type=int, default=300000000)
     parser.add_argument("--num_timesteps", type=int, default=150000000)
+    parser.add_argument(
+        "--num_envs",
+        type=int,
+        default=None,
+        help="Number of parallel simulation environments (defaults to PPO config)",
+    )
     parser.add_argument("--env", type=str, default="joystick", help="env")
     parser.add_argument("--task", type=str, default="flat_terrain", help="Task to run")
     parser.add_argument(
