@@ -62,6 +62,7 @@ class MjInfer(MJInferBase):
         print(f"joint names: {self.joint_names}")
         print(f"actuator names: {self.actuator_names}")
         print(f"backlash joint names: {self.backlash_joint_names}")
+        print(f"Control mode: {'head' if self.head_control_mode else 'walking'}")
         # print(f"actual joints idx: {self.get_actual_joints_idx()}")
 
     def get_obs(
@@ -71,7 +72,6 @@ class MjInfer(MJInferBase):
     ):
         gyro = self.get_gyro(data)
         accelerometer = self.get_accelerometer(data)
-        accelerometer[0] += 1.3
 
         joint_angles = self.get_actuator_joints_qpos(data.qpos)
         joint_vel = self.get_actuator_joints_qvel(data.qvel)
@@ -106,6 +106,7 @@ class MjInfer(MJInferBase):
         print(f"key: {keycode}")
         if keycode == 72:  # h
             self.head_control_mode = not self.head_control_mode
+            print(f"Control mode: {'head' if self.head_control_mode else 'walking'}")
         lin_vel_x = 0
         lin_vel_y = 0
         ang_vel = 0

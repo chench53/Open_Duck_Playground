@@ -1,6 +1,16 @@
 import jax.numpy as jp
 import jax
 
+try:
+    from mujoco_playground._src.collision import geoms_colliding
+except ModuleNotFoundError:
+    def geoms_colliding(data, geom_id, other_geom_id):
+        geom = data.contact.geom
+        matches = ((geom[:, 0] == geom_id) & (geom[:, 1] == other_geom_id)) | (
+            (geom[:, 0] == other_geom_id) & (geom[:, 1] == geom_id)
+        )
+        return jp.any(matches & (data.contact.dist < 0.0))
+
 
 class LowPassActionFilter:
     def __init__(self, control_freq, cutoff_frequency=30.0):

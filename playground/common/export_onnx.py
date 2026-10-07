@@ -4,6 +4,8 @@ from tensorflow.keras import layers
 import tf2onnx
 import numpy as np
 
+tf.config.set_visible_devices([], "GPU")
+
 def export_onnx(
     params, act_size, ppo_params, obs_size, output_path="ONNX.onnx"
 ):
