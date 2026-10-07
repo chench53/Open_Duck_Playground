@@ -16,6 +16,7 @@ class MJInferBase:
         self.decimation = 10
         self.model.opt.timestep = self.sim_dt
         self.data = mujoco.MjData(self.model)
+        mujoco.mj_step(self.model, self.data)
 
         self.num_dofs = self.model.nu
         self.floating_base_name = [
@@ -112,7 +113,6 @@ class MJInferBase:
         self.gravity_id = mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_SENSOR, "upvector"
         )
-        self.gravity_addr = self.model.sensor_adr[self.gravity_id]
         self.gravity_dimensions = 3
 
         self.init_pos = np.array(
@@ -126,7 +126,6 @@ class MJInferBase:
 
         self.data.qpos[:] = self.model.keyframe("home").qpos
         self.data.ctrl[:] = self.default_actuator
-        mujoco.mj_forward(self.model, self.data)
 
     def get_actuator_id_from_name(self, name: str) -> int:
         """Return the id of a specified actuator"""
@@ -254,7 +253,7 @@ class MJInferBase:
 
     def get_gravity(self, data):
         return data.sensordata[
-            self.gravity_addr : self.gravity_addr + self.gravity_dimensions
+            self.gravity_id : self.gravity_id + self.gravity_dimensions
         ]
 
     def check_contact(self, data, body1_name, body2_name):

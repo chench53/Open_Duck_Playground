@@ -9,7 +9,7 @@
 				"-e",
 				"bash",
 				"-lc",
-				"cd /home/chench53/cccodes/Open_Duck_Playground_Resources; env PYTHONPATH=/mnt/e/cccodes/robot/Open_Duck_Playground XLA_PYTHON_CLIENT_PREALLOCATE=false /home/chench53/cccodes/Open_Duck_Playground_Resources/.venv/bin/python /mnt/e/cccodes/robot/Open_Duck_Playground/playground/open_duck_mini_v2/runner.py --env joystick --task flat_terrain --num_timesteps 10000 --num_envs 128 --output_dir /home/chench53/cccodes/Open_Duck_Playground_Resources/checkpoints_smoke"
+				"cd /mnt/e/cccodes/robot/Open_Duck_Playground; env PYTHONPATH=/mnt/e/cccodes/robot/Open_Duck_Playground XLA_PYTHON_CLIENT_MEM_FRACTION=0.75 TF_NUM_INTRAOP_THREADS=4 TF_NUM_INTEROP_THREADS=2 OMP_NUM_THREADS=4 /home/chench53/cccodes/Open_Duck_Playground_Resources/.venv/bin/python -u -m playground.open_duck_mini_v2.runner --env joystick --task flat_terrain_backlash --num_timesteps 10240 --num_envs 128 --batch_size 64 --num_minibatches 2 --num_evals 2 --num_eval_envs 16 --num_resets_per_eval 0 --seed 0 --output_dir checkpoints/smoke"
 			],
 			"isBackground": false,
 			"problemMatcher": []
@@ -22,7 +22,7 @@
 				"-e",
 				"bash",
 				"-lc",
-				"cd /home/chench53/cccodes/Open_Duck_Playground_Resources; env PYTHONPATH=/mnt/e/cccodes/robot/Open_Duck_Playground XLA_PYTHON_CLIENT_PREALLOCATE=false JAX_DEFAULT_MATMUL_PRECISION=highest /home/chench53/cccodes/Open_Duck_Playground_Resources/.venv/bin/python /mnt/e/cccodes/robot/Open_Duck_Playground/playground/open_duck_mini_v2/runner.py --env joystick --task flat_terrain --num_timesteps 150000000 --num_envs 128 --output_dir /home/chench53/cccodes/Open_Duck_Playground_Resources/checkpoints"
+				"cd /mnt/e/cccodes/robot/Open_Duck_Playground; env PYTHONPATH=/mnt/e/cccodes/robot/Open_Duck_Playground XLA_PYTHON_CLIENT_MEM_FRACTION=0.75 TF_NUM_INTRAOP_THREADS=4 TF_NUM_INTEROP_THREADS=2 OMP_NUM_THREADS=4 /home/chench53/cccodes/Open_Duck_Playground_Resources/.venv/bin/python -u -m playground.open_duck_mini_v2.runner --env joystick --task flat_terrain_backlash --num_timesteps 300000000 --num_envs 2048 --batch_size 256 --num_minibatches 32 --num_evals 16 --num_eval_envs 128 --num_resets_per_eval 1 --seed 0 --output_dir checkpoints/reproduction"
 			],
 			"isBackground": false,
 			"problemMatcher": []
@@ -35,10 +35,18 @@
 				"-e",
 				"bash",
 				"-lc",
-				"cd /home/chench53/cccodes/Open_Duck_Playground_Resources; env PYTHONPATH=/mnt/e/cccodes/robot/Open_Duck_Playground /home/chench53/cccodes/Open_Duck_Playground_Resources/.venv/bin/python /mnt/e/cccodes/robot/Open_Duck_Playground/playground/open_duck_mini_v2/mujoco_infer.py --onnx_model_path /home/chench53/cccodes/Open_Duck_Playground_Resources/models/BEST_WALK_ONNX_2.onnx"
+				"cd /mnt/e/cccodes/robot/Open_Duck_Playground; env PYTHONPATH=/mnt/e/cccodes/robot/Open_Duck_Playground MUJOCO_GL=glfw /home/chench53/cccodes/Open_Duck_Playground_Resources/.venv/bin/python -u -m playground.open_duck_mini_v2.mujoco_infer --onnx_model_path '${input:openDuckOnnxPath}' --model_path playground/open_duck_mini_v2/xmls/scene_flat_terrain_backlash.xml"
 			],
 			"isBackground": false,
 			"problemMatcher": []
+		}
+	],
+	"inputs": [
+		{
+			"id": "openDuckOnnxPath",
+			"type": "promptString",
+			"description": "WSL path to an exported ONNX policy",
+			"default": "/mnt/e/cccodes/robot/Open_Duck_Playground/checkpoints/reproduce_20261007/2026_10_07_113243_302284800.onnx"
 		}
 	]
 }

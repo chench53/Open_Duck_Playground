@@ -59,6 +59,9 @@ class BaseRunner(ABC):
             # Convert to float, but watch out for 0-dim JAX arrays
             self.writer.add_scalar(metric_name, metric_value, num_steps)
 
+        self.writer.flush()
+        if "eval/episode_reward" not in metrics:
+            return
         print("-----------")
         print(
             f'STEP: {num_steps} reward: {metrics["eval/episode_reward"]} reward_std: {metrics["eval/episode_reward_std"]}'
@@ -88,8 +91,6 @@ class BaseRunner(ABC):
             "BerkeleyHumanoidJoystickFlatTerrain"
         )  # TODO
         self.ppo_training_params = dict(self.ppo_params)
-        if getattr(self.args, "num_envs", None) is not None:
-            self.ppo_training_params["num_envs"] = self.args.num_envs
         # self.ppo_training_params["num_timesteps"] = 150000000 * 20
         
 
@@ -101,6 +102,14 @@ class BaseRunner(ABC):
         else:
             network_factory = ppo_networks.make_ppo_networks
         self.ppo_training_params["num_timesteps"] = self.num_timesteps
+        for name in (
+            "num_envs", "batch_size", "num_minibatches", "num_evals",
+            "num_eval_envs", "num_resets_per_eval", "seed",
+        ):
+            value = getattr(self.args, name, None)
+            if value is not None:
+                self.ppo_training_params[name] = value
+        self.ppo_training_params["log_training_metrics"] = True
         print(f"PPO params: {self.ppo_training_params}")
 
         train_fn = functools.partial(

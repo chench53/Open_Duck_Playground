@@ -1,10 +1,10 @@
 
 import tensorflow as tf
-tf.config.set_visible_devices([], "GPU")
-
 from tensorflow.keras import layers
 import tf2onnx
 import numpy as np
+
+tf.config.set_visible_devices([], "GPU")
 
 def export_onnx(
     params, act_size, ppo_params, obs_size, output_path="ONNX.onnx"
@@ -174,4 +174,8 @@ def export_onnx(
         tf_policy_network, input_signature=spec, opset=11, output_path=output_path
     )
 
+    # For Antoine :)
+    model_proto, _ = tf2onnx.convert.from_keras(
+        tf_policy_network, input_signature=spec, opset=11, output_path="ONNX.onnx"
+    )
     return

@@ -28,15 +28,6 @@ from mujoco_playground._src import mjx_env
 from . import constants
 
 
-def geoms_colliding(data: mjx.Data, geom1: int, geom2: int) -> jax.Array:
-    geom_pairs = data.contact.geom
-    expected_pair = jp.array([geom1, geom2])
-    matches = jp.all(geom_pairs == expected_pair, axis=-1) | jp.all(
-        geom_pairs == expected_pair[::-1], axis=-1
-    )
-    return jp.any(matches)
-
-
 def get_assets() -> Dict[str, bytes]:
     assets = {}
     mjx_env.update_assets(assets, constants.ROOT_PATH / "xmls", "*.xml")

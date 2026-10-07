@@ -11,9 +11,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ## WSL2 setup
 
 The canonical source stays in the Windows workspace at
-`E:\cccodes\robot\Open_Duck_Playground`. WSL imports it through `/mnt/e`; keep
-the virtual environment, JAX cache, checkpoints, ONNX exports, and logs in
-`/home/chench53/cccodes/Open_Duck_Playground_Resources`.
+`E:\cccodes\robot\Open_Duck_Playground`. WSL imports it through `/mnt/e`. The
+virtual environment is in `/home/chench53/cccodes/Open_Duck_Playground_Resources`.
+The runner stores its JAX cache in `.tmp` beneath the working directory;
+`--output_dir` selects the checkpoint, ONNX, and TensorBoard output directory.
+Training artifacts and caches are ignored by Git.
 
 Install/update the editable package and dependencies in the WSL environment:
 
@@ -33,28 +35,47 @@ PYTHONPATH=/mnt/e/cccodes/robot/Open_Duck_Playground \
 # Training
 
 The `open_duck_mini_v2` joystick environment uses PPO with MJX. The current
-training setup does not use reference motions or an imitation reward. It learns
-to track sampled velocity commands, with frequent zero-command samples for
-standing, plus upright-orientation and fall-termination costs.
+setup preserves the upstream rewards and enables imitation by default through
+`USE_IMITATION_REWARD=True`. It requires
+`playground/open_duck_mini_v2/data/polynomial_coefficients.pkl`, generated with
+[the reference motion generator](https://github.com/apirrone/Open_Duck_reference_motion_generator).
+The standing environment disables imitation by default.
 
-Run a full training job from WSL2:
+The following configuration was exercised on a WSL2 RTX 5070 Ti with 16 GB
+VRAM and 15 GiB WSL RAM. It retains the upstream PPO network and reward setup:
 
 ```bash
-cd /home/chench53/cccodes/Open_Duck_Playground_Resources
+cd /mnt/e/cccodes/robot/Open_Duck_Playground
+mkdir -p checkpoints/reproduce_20261007
+set -o pipefail
 env PYTHONPATH=/mnt/e/cccodes/robot/Open_Duck_Playground \
-  XLA_PYTHON_CLIENT_PREALLOCATE=false JAX_DEFAULT_MATMUL_PRECISION=highest \
-  .venv/bin/python /mnt/e/cccodes/robot/Open_Duck_Playground/playground/open_duck_mini_v2/runner.py \
-  --env joystick --task flat_terrain --num_timesteps 150000000 \
-  --num_envs 128 --output_dir /home/chench53/cccodes/Open_Duck_Playground_Resources/checkpoints_locomotion
+  XLA_PYTHON_CLIENT_MEM_FRACTION=0.75 TF_NUM_INTRAOP_THREADS=4 \
+  TF_NUM_INTEROP_THREADS=2 OMP_NUM_THREADS=4 MUJOCO_GL=egl \
+  /home/chench53/cccodes/Open_Duck_Playground_Resources/.venv/bin/python -u \
+  -m playground.open_duck_mini_v2.runner \
+  --env joystick --task flat_terrain_backlash --num_timesteps 300000000 \
+  --num_envs 2048 --batch_size 256 --num_minibatches 32 --num_evals 16 \
+  --num_eval_envs 128 --num_resets_per_eval 1 --seed 0 \
+  --output_dir checkpoints/reproduce_20261007 \
+  2>&1 | tee checkpoints/reproduce_20261007/stdout.log
 ```
+
+Resource parameters can be overridden with the flags above; omitted flags use
+the upstream PPO defaults. Resume with `--restore_checkpoint_path` pointing to
+an Orbax checkpoint directory, not an ONNX file. TensorFlow uses CPU for export
+so it does not compete with JAX for GPU memory.
 
 ## Tensorboard
 
 ```bash
-cd /home/chench53/cccodes/Open_Duck_Playground_Resources
-uv tool run --python 3.12 --from tensorboard tensorboard \
-  --logdir checkpoints_locomotion --host 0.0.0.0 --port 6007
+uv pip install --python /home/chench53/cccodes/Open_Duck_Playground_Resources/.venv/bin/python tensorboard
+env CUDA_VISIBLE_DEVICES=-1 \
+  /home/chench53/cccodes/Open_Duck_Playground_Resources/.venv/bin/tensorboard \
+  --logdir /mnt/e/cccodes/robot/Open_Duck_Playground/checkpoints \
+  --host 0.0.0.0 --port 6006
 ```
+
+Open `http://localhost:6006/`. Both training and evaluation metrics are recorded.
 
 # Inference 
 
@@ -63,23 +84,38 @@ Infer mujoco
 (for now this is specific to open_duck_mini_v2)
 
 ```bash
-cd /home/chench53/cccodes/Open_Duck_Playground_Resources
-env PYTHONPATH=/mnt/e/cccodes/robot/Open_Duck_Playground \
-  .venv/bin/python /mnt/e/cccodes/robot/Open_Duck_Playground/playground/open_duck_mini_v2/mujoco_infer.py \
-  --onnx_model_path <path_to_.onnx>
+cd /mnt/e/cccodes/robot/Open_Duck_Playground
+env PYTHONPATH=/mnt/e/cccodes/robot/Open_Duck_Playground MUJOCO_GL=glfw \
+  /home/chench53/cccodes/Open_Duck_Playground_Resources/.venv/bin/python \
+  -m playground.open_duck_mini_v2.mujoco_infer \
+  --onnx_model_path <path_to_.onnx> \
+  --model_path playground/open_duck_mini_v2/xmls/scene_flat_terrain_backlash.xml
 ```
 
 With WSLg enabled, this opens the MuJoCo viewer. Arrow keys control forward,
-backward, and lateral velocity; Q/E turn; Space clears the virtual joystick
-commands; H toggles head-control input; P/M change gait phase speed. Commands
-stay active until changed or cleared with Space.
+backward, and lateral velocity; Q/E turn; H toggles head-control input; P and
+semicolon change gait phase speed. The initial mode is walking and mode changes
+are printed. Commands remain active after key release. Each key replaces the
+other velocity axes, so simultaneous forward/turn control is not supported.
+Press H to stop and switch modes, then H again to return to walking. This
+version does not provide a stochastic MJX viewer or an R reset command.
 
-For interactive stochastic MJX inference and fall reset, pass the matching
-Orbax checkpoint directory with `--mjx-manual-viewer --checkpoint-path` (also
-provide its ONNX export as `--onnx_model_path` for CLI compatibility). Arrow
-keys control translation, Q/E turn, Space stops, and R resets after a fall. The
-MJX checkpoint Viewer and deterministic ONNX Viewer are different policy paths;
-their rollouts should not be compared as if they were the same evaluation.
+## Reproduction results (2026-10-07)
+
+- WSL Python 3.12.15, MuJoCo/MJX 3.14.0, JAX 0.6.2 with CUDA12,
+  Playground 0.2.0, and Brax 0.14.2.
+- Training completed 302,284,800 steps with exit code 0; checkpoints and ONNX
+  exports were generated throughout training.
+- The viewer formerly added 1.3 to accelerometer X, unlike the effective JAX
+  training observation. Removing this inference-only bias improved the same
+  policy's 15-second forward distance from 0.056 m to 1.091 m.
+- Corrected inference passed six 15-second stand, forward, and forward/turn
+  rollouts across the flat models with and without backlash. Keyboard forward
+  control traveled about 1.61 m over 12 seconds without falling.
+- Forward yaw drift remains (about 0.75 rad in the 15-second backlash rollout).
+  These are short deterministic checks, not a guarantee of robust or hardware
+  walking. Model weights, detailed reports, videos, and logs are local artifacts
+  and are not included in this repository.
 
 # Documentation
 
