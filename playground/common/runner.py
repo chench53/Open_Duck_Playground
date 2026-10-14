@@ -102,14 +102,6 @@ class BaseRunner(ABC):
         else:
             network_factory = ppo_networks.make_ppo_networks
         self.ppo_training_params["num_timesteps"] = self.num_timesteps
-        for name in (
-            "num_envs", "batch_size", "num_minibatches", "num_evals",
-            "num_eval_envs", "num_resets_per_eval", "seed",
-        ):
-            value = getattr(self.args, name, None)
-            if value is not None:
-                self.ppo_training_params[name] = value
-        self.ppo_training_params["log_training_metrics"] = True
         print(f"PPO params: {self.ppo_training_params}")
 
         train_fn = functools.partial(
