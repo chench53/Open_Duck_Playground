@@ -24,7 +24,7 @@ from mujoco.mjx._src import math
 import numpy as np
 
 from mujoco_playground._src import mjx_env
-from mujoco_playground._src.collision import geoms_colliding
+from playground.common.utils import geoms_colliding
 
 from . import constants
 from . import base as open_duck_mini_v2_base
@@ -249,7 +249,10 @@ class Standing(open_duck_mini_v2_base.OpenDuckMiniV2Env):
         # print(f'DEBUG3 base qvel: {qvel}')
         ctrl = self.get_actuator_joints_qpos(qpos)
         # print(f'DEBUG4 ctrl: {ctrl}')
-        data = mjx_env.init(self.mjx_model, qpos=qpos, qvel=qvel, ctrl=ctrl)
+        if hasattr(mjx_env, "init"):
+            data = mjx_env.init(self.mjx_model, qpos=qpos, qvel=qvel, ctrl=ctrl)
+        else:
+            data = mjx_env.make_data(self.mj_model, qpos=qpos, qvel=qvel, ctrl=ctrl)
         rng, cmd_rng = jax.random.split(rng)
         cmd = self.sample_command(cmd_rng)
 

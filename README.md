@@ -16,10 +16,10 @@ Then copy `polynomial_coefficients.pkl` in `playground/<robot>/data/`
 
 You'll also have to set `USE_IMITATION_REWARD=True` in it's `joystick.py` file
 
-Run: 
+Run:
 
 ```bash
-uv run playground/<robot>/runner.py 
+uv run playground/<robot>/runner.py
 ```
 
 ## Tensorboard
@@ -96,3 +96,14 @@ Inspired from https://github.com/kscalelabs/mujoco_playground
 ```bash
 uv run playground/open_duck_mini_v2/runner.py --task flat_terrain_backlash --num_timesteps 300000000
 ```
+
+## Compatibility-only Fork
+
+Source baseline: [apirrone/Open_Duck_Playground at b9be205](https://github.com/apirrone/Open_Duck_Playground/tree/b9be205ac64488c23504ca42e5ec790337adeec3).
+Only collision/init API adaptation, Brax progress-callback compatibility,
+CPU TensorFlow export, and the heightfield resource path fix are retained.
+Rewards, observations, training defaults, and viewer behavior follow upstream;
+this includes its known accelerometer input discrepancy. Experimental CLI
+options and VS Code training tasks have been removed.
+[doc.md](doc.md) is a historical learning record, not current run instructions.
+Local checkpoints, logs, and diagnostic reports are preserved and ignored by Git.

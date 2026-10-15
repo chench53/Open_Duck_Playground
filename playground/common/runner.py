@@ -59,6 +59,9 @@ class BaseRunner(ABC):
             # Convert to float, but watch out for 0-dim JAX arrays
             self.writer.add_scalar(metric_name, metric_value, num_steps)
 
+        self.writer.flush()
+        if "eval/episode_reward" not in metrics:
+            return
         print("-----------")
         print(
             f'STEP: {num_steps} reward: {metrics["eval/episode_reward"]} reward_std: {metrics["eval/episode_reward_std"]}'
